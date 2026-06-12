@@ -1,5 +1,5 @@
 import os
-import fitz
+from pypdf import PdfReader
 import pandas as pd
 import io
 from datetime import datetime
@@ -187,7 +187,7 @@ async def extract_custom(
     print(f"\n{'='*60}")
     print(f"📥 Extraction personnalisée")
     print(f"📁 Template : {template_type}")
-    print(f" Champs demandés : {fields_list}")
+    print(f"📋 Champs demandés : {fields_list}")
     print(f"📄 Fichiers : {len(files)}")
     print(f"{'='*60}\n")
     
@@ -259,13 +259,13 @@ Règles:
         print(f"\n📄 Traitement: {file.filename}")
         
         try:
-            # Lecture du PDF
+            # Lecture du PDF avec pypdf
             contents = await file.read()
-            doc = fitz.open(stream=contents, filetype="pdf")
+            pdf_file = io.BytesIO(contents)
+            reader = PdfReader(pdf_file)
             text = ""
-            for i in range(min(5, len(doc))):
-                text += doc[i].get_text()
-            doc.close()
+            for i in range(min(5, len(reader.pages))):
+                text += reader.pages[i].extract_text()
             
             print(f"   Texte extrait: {len(text)} caractères")
             
@@ -357,7 +357,7 @@ IMPORTANT: Utilise EXACTEMENT ces noms de champs. Réponds UNIQUEMENT avec un JS
         raise HTTPException(status_code=400, detail="Aucun document traité avec succès")
     
     print(f"\n{'='*60}")
-    print(f" Création du fichier Excel...")
+    print(f"📊 Création du fichier Excel...")
     print(f"📈 Total: {len(results)} enregistrement(s)")
     print(f"{'='*60}\n")
     
