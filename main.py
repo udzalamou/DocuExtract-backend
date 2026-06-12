@@ -22,21 +22,17 @@ app = FastAPI(title="DocuExtract API")
 # Configuration CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # En production, remplace par ton domaine
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Configuration OpenRouter avec variable d'environnement
+# Configuration OpenRouter
 client = OpenAI(
     base_url="https://openrouter.ai/api/v1",
     api_key=os.getenv("OPENROUTER_API_KEY")
 )
-
-# Vérifier que la clé API est configurée
-if not os.getenv("OPENROUTER_API_KEY"):
-    print("⚠️  WARNING: OPENROUTER_API_KEY not set in environment variables!")
 
 # Templates prédéfinis
 TEMPLATES = {
@@ -84,25 +80,21 @@ TEMPLATES = {
 }
 
 def normalize_date(date_str: str, year_hint: int = 2025) -> Optional[str]:
-    """Normalise les dates au format YYYY-MM-DD, même les formats courts comme '02.01'"""
     if not date_str or str(date_str).lower() in ['null', 'none', '']:
         return None
     
     date_str = str(date_str).strip()
     
-    # Format court JJ.MM (ex: "02.01" → "2025-01-02")
     match = re.match(r'^(\d{1,2})\.(\d{1,2})$', date_str)
     if match:
         day, month = match.groups()
         return f"{year_hint}-{int(month):02d}-{int(day):02d}"
     
-    # Format court JJ/MM (ex: "02/01" → "2025-01-02")
     match = re.match(r'^(\d{1,2})/(\d{1,2})$', date_str)
     if match:
         day, month = match.groups()
         return f"{year_hint}-{int(month):02d}-{int(day):02d}"
     
-    # Formats complets
     date_formats = [
         "%d.%m.%y", "%d/%m/%y", "%d.%m.%Y", "%d/%m/%Y",
         "%Y-%m-%d", "%d-%m-%Y", "%d %B %Y", "%d %b %Y", "%B %d, %Y"
@@ -118,7 +110,6 @@ def normalize_date(date_str: str, year_hint: int = 2025) -> Optional[str]:
     return date_str
 
 def parse_french_number(value) -> Optional[float]:
-    """Convertit un nombre français (virgule) en float"""
     if value is None or value == '':
         return None
     
@@ -129,7 +120,6 @@ def parse_french_number(value) -> Optional[float]:
         return None
 
 def map_field_names(data: dict, all_fields: list) -> dict:
-    """Map les noms de champs retournés par l'IA vers les noms attendus"""
     field_mapping = {
         'valeur': 'date_valeur',
         'date_valeur': 'date_valeur',
@@ -165,7 +155,6 @@ async def root():
 
 @app.get("/templates")
 async def get_templates():
-    """Récupérer tous les templates disponibles"""
     return {"templates": TEMPLATES}
 
 @app.post("/extract-custom")
@@ -175,9 +164,6 @@ async def extract_custom(
     custom_fields: str = Form("[]"),
     template_type: str = Form("facture")
 ):
-    """Extraction personnalisée selon les champs choisis"""
-    
-    # Parser les champs depuis les strings JSON
     try:
         fields_list = json.loads(fields)
         custom_fields_list = json.loads(custom_fields) if custom_fields else []
@@ -196,70 +182,32 @@ async def extract_custom(
     if not all_fields:
         raise HTTPException(status_code=400, detail="Aucun champ sélectionné")
     
-    # Prompt système adapté au type de document
     if template_type == "releve_bancaire":
         system_prompt = """Tu es un expert en extraction de relevés bancaires français.
 
-Le document contient un tableau d'écritures bancaires avec les colonnes:
-- DATE: Date de l'opération (format JJ.MM ou JJ.MM.AA)
-- LIBELLE: Description détaillée de l'opération
-- VALEUR: Date de valeur de l'opération
-- DEBIT: Montant débité (colonne de gauche)
-- CREDIT: Montant crédité (colonne de droite)
+RÈGLES IMPORTANTES:
+1. Chaque ligne = UNE opération bancaire
+2. Combine les libellés multi-lignes
+3. Montants avec virgule (ex: 1 462,50)
+4. Utilise EXACTEMENT ces noms de champs: date, date_valeur, libelle, debit, credit
 
-RÈGLES TRÈS IMPORTANTES:
-1. Chaque ligne du tableau = UNE opération bancaire distincte
-2. Les libellés peuvent être sur plusieurs lignes - COMBINE-LES en une seule chaîne
-3. Les montants utilisent la VIRGULE comme séparateur décimal (ex: 1 462,50)
-4. Si DEBIT est vide, mets null. Si CREDIT est vide, mets null.
-5. Capture TOUTES les opérations, y compris le solde initial
-6. Les références client/mandat sont dans le libellé (REF.CLIENT:, REF.MANDAT:)
-
-NOMS DE CHAMPS EXACTS À UTILISER (très important):
-- "date" pour la date d'opération
-- "date_valeur" pour la date de valeur (PAS "valeur")
-- "libelle" pour le libellé
-- "debit" pour le débit
-- "credit" pour le crédit
-- "solde" pour le solde
-- "reference_client" pour la référence client
-- "reference_mandat" pour la référence mandat
-
-Format de réponse: JSON avec une liste d'opérations.
-
-Structure attendue pour CHAQUE opération:
-{
-  "date": "JJ.MM",
-  "date_valeur": "JJ.MM.AA ou null",
-  "libelle": "texte complet du libellé",
-  "debit": nombre ou null,
-  "credit": nombre ou null
-}
-
-Sois PRÉCIS et COMPLET dans l'extraction."""
+Réponds avec un JSON valide."""
     else:
-        system_prompt = f"""Tu es un expert en extraction de données de documents.
+        system_prompt = f"""Tu es un expert en extraction de données.
 
-Extrais UNIQUEMENT les champs suivants:
-{chr(10).join([f'- {field}' for field in all_fields])}
+Extrais: {', '.join(all_fields)}
 
-Règles:
-1. Dates: format YYYY-MM-DD
-2. Montants: nombres décimaux (utilise le point)
-3. Si un champ n'est pas trouvé: null
-4. Réponds UNIQUEMENT avec un JSON valide."""
+Réponds avec un JSON valide."""
     
     results = []
     
     for file in files:
         if not file.filename.lower().endswith(".pdf"):
-            print(f"⚠️  Fichier ignoré (pas un PDF): {file.filename}")
             continue
         
         print(f"\n📄 Traitement: {file.filename}")
         
         try:
-            # Lecture du PDF avec pypdf
             contents = await file.read()
             pdf_file = io.BytesIO(contents)
             reader = PdfReader(pdf_file)
@@ -270,20 +218,13 @@ Règles:
             print(f"   Texte extrait: {len(text)} caractères")
             
             if len(text.strip()) < 50:
-                print(f"   ⚠️  Trop peu de texte, ignoré")
                 continue
             
-            # Construction du message utilisateur
-            user_message = f"""DOCUMENT À ANALYSER:
+            user_message = f"""DOCUMENT:
 {text}
 
-EXTRAIS les champs suivants au format JSON:
-{chr(10).join([f'- {field}' for field in all_fields])}
-
-IMPORTANT: Utilise EXACTEMENT ces noms de champs. Réponds UNIQUEMENT avec un JSON valide."""
+Extrais: {', '.join(all_fields)}"""
             
-            # Appel à l'API OpenAI
-            print(f"   🤖 Appel à l'IA...")
             completion = client.chat.completions.create(
                 model="openai/gpt-4o-mini",
                 messages=[
@@ -294,12 +235,9 @@ IMPORTANT: Utilise EXACTEMENT ces noms de champs. Réponds UNIQUEMENT avec un JS
                 temperature=0.1
             )
             
-            # Parsing du JSON retourné
             extracted_data = json.loads(completion.choices[0].message.content)
+            print(f"   ✅ Données extraites")
             
-            print(f"   ✅ Données extraites par l'IA")
-            
-            # Traitement selon le type de document
             if template_type == "releve_bancaire":
                 operations = []
                 
@@ -307,82 +245,69 @@ IMPORTANT: Utilise EXACTEMENT ces noms de champs. Réponds UNIQUEMENT avec un JS
                     for key, value in extracted_data.items():
                         if isinstance(value, list):
                             operations.extend(value)
-                        elif isinstance(value, dict) and 'libelle' in str(value).lower():
+                        elif isinstance(value, dict):
                             operations.append(value)
-                    if not operations and 'libelle' in str(extracted_data).lower():
-                        operations.append(extracted_data)
                 elif isinstance(extracted_data, list):
                     operations = extracted_data
                 
                 for op in operations:
                     op = map_field_names(op, all_fields)
                     
-                    if 'date' in op and op['date']:
-                        op['date'] = normalize_date(op['date'])
-                    if 'date_valeur' in op and op['date_valeur']:
-                        op['date_valeur'] = normalize_date(op['date_valeur'])
-                    
+                    if 'date' in op:
+                        op['date'] = normalize_date(op.get('date'))
+                    if 'date_valeur' in op:
+                        op['date_valeur'] = normalize_date(op.get('date_valeur'))
                     if 'debit' in op:
-                        op['debit'] = parse_french_number(op['debit'])
+                        op['debit'] = parse_french_number(op.get('debit'))
                     if 'credit' in op:
-                        op['credit'] = parse_french_number(op['credit'])
-                    if 'solde' in op:
-                        op['solde'] = parse_french_number(op['solde'])
+                        op['credit'] = parse_french_number(op.get('credit'))
                     
                     op['fichier'] = file.filename
                     results.append(op)
                 
-                print(f"   ✅ {len(operations)} opération(s) extraites")
+                print(f"   ✅ {len(operations)} opération(s)")
             else:
                 extracted_data = map_field_names(extracted_data, all_fields)
                 
                 for field in all_fields:
-                    if field in extracted_data and extracted_data[field]:
+                    if field in extracted_data:
                         if 'date' in field.lower():
                             extracted_data[field] = normalize_date(extracted_data[field])
-                        elif field in ['debit', 'credit', 'solde', 'montant_ht', 'montant_ttc', 'montant']:
+                        elif field in ['debit', 'credit', 'montant_ht', 'montant_ttc']:
                             extracted_data[field] = parse_french_number(extracted_data[field])
                 
                 extracted_data['fichier'] = file.filename
                 results.append(extracted_data)
-                print(f"   ✅ 1 document extrait")
             
         except Exception as e:
             print(f"   ❌ ERREUR: {str(e)}")
-            import traceback
-            traceback.print_exc()
             continue
     
     if not results:
-        raise HTTPException(status_code=400, detail="Aucun document traité avec succès")
+        raise HTTPException(status_code=400, detail="Aucun document traité")
     
-    print(f"\n{'='*60}")
-    print(f"📊 Création du fichier Excel...")
-    print(f"📈 Total: {len(results)} enregistrement(s)")
-    print(f"{'='*60}\n")
+    print(f"\n📊 Création Excel... {len(results)} enregistrement(s)")
     
     df = pd.DataFrame(results)
-    
     column_order = ['fichier'] + all_fields
     available_columns = [col for col in column_order if col in df.columns]
     df = df[available_columns]
     
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
-        df.to_excel(writer, index=False, sheet_name='Données extraites')
+        df.to_excel(writer, index=False, sheet_name='Données')
     
     output.seek(0)
     
     return StreamingResponse(
         output,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": f"attachment; filename=extraction_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"}
+        headers={"Content-Disposition": f"attachment; filename=extraction.xlsx"}
     )
 
 if __name__ == "__main__":
     print("\n" + "="*60)
     print("🚀 Démarrage de DocuExtract API v2.0")
     print("📍 Serveur: http://0.0.0.0:8000")
-    print("📖 Docs: http://localhost:8000/docs")
     print("="*60 + "\n")
     uvicorn.run(app, host="0.0.0.0", port=8000)
