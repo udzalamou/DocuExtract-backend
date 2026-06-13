@@ -61,7 +61,7 @@ TEMPLATES = {
             {"nom": "credit", "label": "💰 Crédit", "type": "number"},
             {"nom": "solde", "label": "💳 Solde", "type": "number"},
             {"nom": "reference_client", "label": "🔖 Réf. Client", "type": "text"},
-            {"nom": "reference_mandat", "label": "🔖 Réf. Mandat", "type": "text"}
+            {"nom": "reference_mandat", "label": " Réf. Mandat", "type": "text"}
         ]
     },
     "contrat": {
@@ -135,6 +135,10 @@ def map_field_names(data: dict, all_fields: list) -> dict:
         'ref_client': 'reference_client',
         'reference_mandat': 'reference_mandat',
         'ref_mandat': 'reference_mandat',
+        'fournisseur_designation': 'fournisseur_designation',
+        'mode_de_paiement': 'mode_de_paiement',
+        'nature': 'nature',
+        'montant': 'montant',
     }
     
     mapped_data = {}
@@ -173,29 +177,34 @@ async def extract_custom(
     print(f"\n{'='*60}")
     print(f"📥 Extraction personnalisée")
     print(f"📁 Template : {template_type}")
-    print(f"📋 Champs demandés : {fields_list}")
+    print(f" Champs standards : {fields_list}")
+    print(f"➕ Champs personnalisés : {custom_fields_list}")
     print(f"📄 Fichiers : {len(files)}")
     print(f"{'='*60}\n")
     
+    # COMBINER les champs standards ET personnalisés
     all_fields = fields_list + custom_fields_list
     
     if not all_fields:
         raise HTTPException(status_code=400, detail="Aucun champ sélectionné")
     
     if template_type == "releve_bancaire":
-        system_prompt = """Tu es un expert en extraction de relevés bancaires français.
+        system_prompt = f"""Tu es un expert en extraction de relevés bancaires français.
 
-RÈGLES IMPORTANTES:
+EXTRAIS TOUS ces champs pour chaque opération :
+{chr(10).join([f'- {field}' for field in all_fields])}
+
+RÈGLES :
 1. Chaque ligne = UNE opération bancaire
 2. Combine les libellés multi-lignes
 3. Montants avec virgule (ex: 1 462,50)
-4. Utilise EXACTEMENT ces noms de champs: date, date_valeur, libelle, debit, credit
-
-Réponds avec un JSON valide."""
+4. Si un champ n'est pas trouvé : null
+5. Réponds avec un JSON valide contenant une liste d'opérations"""
     else:
         system_prompt = f"""Tu es un expert en extraction de données.
 
-Extrais: {', '.join(all_fields)}
+EXTRAIS ces champs :
+{chr(10).join([f'- {field}' for field in all_fields])}
 
 Réponds avec un JSON valide."""
     
@@ -223,7 +232,7 @@ Réponds avec un JSON valide."""
             user_message = f"""DOCUMENT:
 {text}
 
-Extrais: {', '.join(all_fields)}"""
+EXTRAIS ces champs : {', '.join(all_fields)}"""
             
             completion = client.chat.completions.create(
                 model="openai/gpt-4o-mini",
@@ -261,6 +270,8 @@ Extrais: {', '.join(all_fields)}"""
                         op['debit'] = parse_french_number(op.get('debit'))
                     if 'credit' in op:
                         op['credit'] = parse_french_number(op.get('credit'))
+                    if 'montant' in op:
+                        op['montant'] = parse_french_number(op.get('montant'))
                     
                     op['fichier'] = file.filename
                     results.append(op)
@@ -273,7 +284,7 @@ Extrais: {', '.join(all_fields)}"""
                     if field in extracted_data:
                         if 'date' in field.lower():
                             extracted_data[field] = normalize_date(extracted_data[field])
-                        elif field in ['debit', 'credit', 'montant_ht', 'montant_ttc']:
+                        elif field in ['debit', 'credit', 'montant_ht', 'montant_ttc', 'montant']:
                             extracted_data[field] = parse_french_number(extracted_data[field])
                 
                 extracted_data['fichier'] = file.filename
@@ -289,6 +300,8 @@ Extrais: {', '.join(all_fields)}"""
     print(f"\n📊 Création Excel... {len(results)} enregistrement(s)")
     
     df = pd.DataFrame(results)
+    
+    # ORDRE DES COLONNES : fichier + tous les champs (standards + personnalisés)
     column_order = ['fichier'] + all_fields
     available_columns = [col for col in column_order if col in df.columns]
     df = df[available_columns]
