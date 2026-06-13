@@ -1,0 +1,7 @@
+frontend/
+.env
+__pycache__/
+*.pyc
+.git
+README.md
+main_old.py
