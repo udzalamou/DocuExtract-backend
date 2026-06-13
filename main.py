@@ -177,13 +177,18 @@ async def extract_custom(
     print(f"\n{'='*60}")
     print(f"📥 Extraction personnalisée")
     print(f"📁 Template : {template_type}")
-    print(f" Champs standards : {fields_list}")
+    print(f"📋 Champs standards : {fields_list}")
     print(f"➕ Champs personnalisés : {custom_fields_list}")
     print(f"📄 Fichiers : {len(files)}")
     print(f"{'='*60}\n")
     
     # COMBINER les champs standards ET personnalisés
+    if custom_fields_list is None:
+        custom_fields_list = []
+    
     all_fields = fields_list + custom_fields_list
+    
+    print(f"✅ Champs totaux à extraire: {all_fields}")
     
     if not all_fields:
         raise HTTPException(status_code=400, detail="Aucun champ sélectionné")
@@ -294,33 +299,24 @@ EXTRAIS ces champs : {', '.join(all_fields)}"""
             print(f"   ❌ ERREUR: {str(e)}")
             continue
     
-    if not results:
+       if not results:
         raise HTTPException(status_code=400, detail="Aucun document traité")
     
     print(f"\n📊 Création Excel... {len(results)} enregistrement(s)")
+    print(f"📋 Champs demandés: {all_fields}")
     
     df = pd.DataFrame(results)
     
-    # ORDRE DES COLONNES : fichier + tous les champs (standards + personnalisés)
+    print(f"📊 Colonnes avant ajout: {df.columns.tolist()}")
+    
+    # CRÉER toutes les colonnes, même si elles n'existent pas
+    for field in all_fields:
+        if field not in df.columns:
+            print(f"⚠️ Ajout colonne manquante: {field}")
+            df[field] = None
+    
+    # ORDRE STRICT : fichier + champs sélectionnés dans l'ordre
     column_order = ['fichier'] + all_fields
-    available_columns = [col for col in column_order if col in df.columns]
-    df = df[available_columns]
+    df = df[column_order]
     
-    output = io.BytesIO()
-    with pd.ExcelWriter(output, engine='openpyxl') as writer:
-        df.to_excel(writer, index=False, sheet_name='Données')
-    
-    output.seek(0)
-    
-    return StreamingResponse(
-        output,
-        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": f"attachment; filename=extraction.xlsx"}
-    )
-
-if __name__ == "__main__":
-    print("\n" + "="*60)
-    print("🚀 Démarrage de DocuExtract API v2.0")
-    print("📍 Serveur: http://0.0.0.0:8000")
-    print("="*60 + "\n")
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    print(f"✅ Colonnes finales: {df.columns.tolist()}")
