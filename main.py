@@ -305,18 +305,22 @@ EXTRAIS ces champs : {', '.join(all_fields)}"""
     print(f"\n📊 Création Excel... {len(results)} enregistrement(s)")
     print(f"📋 Champs demandés: {all_fields}")
     
-    df = pd.DataFrame(results)
+        df = pd.DataFrame(results)
     
-    print(f"📊 Colonnes avant ajout: {df.columns.tolist()}")
+    print(f"📊 Colonnes AVANT filtrage: {df.columns.tolist()}")
+    print(f"🎯 Colonnes DEMANDÉES: {all_fields}")
     
-    # CRÉER toutes les colonnes, même si elles n'existent pas
+    # FILTRER : ne garder QUE les champs demandés
+    columns_to_keep = ['fichier'] + all_fields
+    existing_columns = [col for col in columns_to_keep if col in df.columns]
+    
+    # Ajouter les colonnes manquantes (même vides)
     for field in all_fields:
         if field not in df.columns:
-            print(f"⚠️ Ajout colonne manquante: {field}")
+            print(f"➕ Ajout colonne manquante: {field}")
             df[field] = None
     
-    # ORDRE STRICT : fichier + champs sélectionnés dans l'ordre
-    column_order = ['fichier'] + all_fields
-    df = df[column_order]
+    # Reprendre uniquement les colonnes demandées dans le bon ordre
+    df = df[['fichier'] + all_fields]
     
-    print(f"✅ Colonnes finales: {df.columns.tolist()}")
+    print(f"✅ Colonnes FINALES: {df.columns.tolist()}")
